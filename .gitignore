@@ -1,0 +1,11 @@
+logs/
+data/
+ckpt/
+test/
+bidaf/
+__pycache__
+*.pyc
+.vector_cache/
+.ipynb_checkpoints/
+hub
+hub.pub
