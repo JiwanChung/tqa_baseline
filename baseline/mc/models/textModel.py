@@ -4,10 +4,9 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 class TextModel(nn.Module):
-    def __init__(self, vocab, config, embed_size):
+    def __init__(self, vocab, config):
         super(TextModel, self).__init__()
 
-        self.embed_size = embed_size
         self.config = config
 
         self.embed = nn.Embedding(len(vocab), config.emb_dim)
@@ -15,17 +14,24 @@ class TextModel(nn.Module):
 
         self.bi = 2 if config.bi_gru else 1
 
-        self.embed_context = nn.GRU(config.emb_dim, embed_size, bidirectional=config.bi_gru)
-        self.embed_question = nn.GRU(config.emb_dim, embed_size, bidirectional=config.bi_gru)
-        self.embed_answer = nn.GRU(config.emb_dim, embed_size, bidirectional=config.bi_gru)
+        self.embed_context = nn.GRU(config.emb_dim, self.config.embed_size, bidirectional=config.bi_gru)
+        self.embed_question = nn.GRU(config.emb_dim, self.config.embed_size, bidirectional=config.bi_gru)
+        self.embed_answer = nn.GRU(config.emb_dim, self.config.embed_size, bidirectional=config.bi_gru)
 
     def forward(self, context, question, answers, answers_size):
 
-        if not self.config.cuda:
-            context = Variable(context)
-            question = Variable(question)
+        if not self.config.single_topic:
+            context_shape = list(context.data.size())
+            context_shape.append(self.config.emb_dim)
+            context = context.view(-1, context.size()[2])
+
         context = self.embed(context)
         question = self.embed(question)
+
+        if not self.config.large_topic:
+            if not self.config.single_topic:
+                context = context.view(*context_shape)
+                context = torch.sum(context, 1) # sum along num of topics
 
         M, hm = self.embed_context(context) # P x embed_size
         U, hu = self.embed_question(question) # Q X embed_size
@@ -46,7 +52,7 @@ class TextModel(nn.Module):
                 print(answers.data)
         answers = self.embed(answers)
         C, hc = self.embed_answer(answers) # A X embed_size
-        C = C.unsqueeze(0).view(origin_size[0], origin_size[1], origin_size[2], self.bi*self.embed_size)
+        C = C.unsqueeze(0).view(origin_size[0], origin_size[1], origin_size[2], self.bi*self.config.embed_size)
         c = torch.sum(C, dim=0)
         r = torch.matmul(m.permute(1,0,2), c.permute(1,2,0)).squeeze()
 

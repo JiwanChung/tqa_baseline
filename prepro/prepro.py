@@ -1,12 +1,11 @@
 import argparse
 import json
 import os
-import numpy as np
 import pandas as pd
 from math import log as ln
-import csv
 import spacy
 import re
+from collections import OrderedDict
 
 from tqdm import tqdm
 
@@ -27,8 +26,9 @@ def get_args():
     parser.add_argument('-s', "--source_dir", default=source_dir)
     parser.add_argument('-t', "--target_dir", default=target_dir)
     parser.add_argument('-d', "--debug", action='store_true')
+    parser.add_argument('-top', "--single-topic", action='store_true') # store_true -> False!!
     parser.add_argument('-p', "--if-pair", action='store_true')
-    parser.add_argument('-dq', "--diagram_questions", action='store_false')
+    parser.add_argument('-dq', "--diagram_questions", action='store_true')
 
     # TODO : put more args here
     return parser.parse_args()
@@ -83,49 +83,54 @@ def prepro_each(args, data_type):
 
                 correct_answer = q['correctAnswer']['processedText']
 
+                ans_sorted = OrderedDict(sorted(q['answerChoices'].items()))
+
                 answers = []
                 correct_index = -1
 
-                for index_a, (key_a, answer) in enumerate(q['answerChoices'].items()):
+                for index_a, (key_a, answer) in enumerate(ans_sorted.iteritems()):
                     answer_str = answer['processedText']
                     idstruct = answer['idStructural']
                     answers.append(answer_str)
                     if answer_str == correct_answer or token_sent(correct_answer) == token_sent(remove_delim(idstruct)):
                         correct_index = index_a
 
-                def get_idf(word, docs):
-                    N = len(docs)
-                    count = 0
-                    for doc in docs:
-                        if word in doc:
-                            count += 1
+                if args.single_topic:
+                    def get_idf(word, docs):
+                        N = len(docs)
+                        count = 0
+                        for doc in docs:
+                            if word in doc:
+                                count += 1
 
-                    return ln(float(N)/(1+count))
+                        return ln(float(N)/(1+count))
 
-                def get_tf(word, doc):
-                    N = len(doc)
-                    count = doc.count(word)
+                    def get_tf(word, doc):
+                        N = len(doc)
+                        count = doc.count(word)
 
-                    return float(count)/N
+                        return float(count)/N
 
-                # pick relev topic based on tf-idf
-                idf = {}
+                    # pick relev topic based on tf-idf
+                    idf = {}
 
-                for word in question:
-                    idf[word] = get_idf(word, topics)
+                    for word in question:
+                        idf[word] = get_idf(word, topics)
 
-                max_score = 0
-                max_arg = 0
-                for index_topic, topic in enumerate(topics):
-                    if len(topic) > 0:
-                        score_topic = 0
-                        for word in question:
-                            score_topic += get_tf(word, topic)*idf[word]
-                        if score_topic > max_score:
-                            max_score = score_topic
-                            max_arg = index_topic
+                    max_score = 0
+                    max_arg = 0
+                    for index_topic, topic in enumerate(topics):
+                        if len(topic) > 0:
+                            score_topic = 0
+                            for word in question:
+                                score_topic += get_tf(word, topic)*idf[word]
+                            if score_topic > max_score:
+                                max_score = score_topic
+                                max_arg = index_topic
 
-                relev_topic = topics[max_arg]
+                    relev_topic = topics[max_arg]
+                else:
+                    relev_topic = topics
 
                 # TODO: process diagrams to CNN features
 
@@ -168,7 +173,10 @@ def prepro_each(args, data_type):
         save(args, pair, '{}_{}'.format(data_type, 'pair'))
 
 def save(args, data, data_type):
-    data_path = os.path.join(args.target_dir, "data_{}.tsv".format(data_type))
+    add_opt = ''
+    if not args.single_topic:
+        add_opt = '_full'
+    data_path = os.path.join(args.target_dir, "data_{}{}.tsv".format(data_type, add_opt))
     df = pd.DataFrame(data)
     df.to_csv(data_path, index=False, sep='\t')
 
