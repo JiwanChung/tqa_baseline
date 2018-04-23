@@ -7,23 +7,23 @@ from tqdm import tqdm
 import torch.nn as nn
 
 import os
-import argparse
 from collections import Counter
 import pickle
-from tensorboard import Logger
-from utils.ReCuda import ReCuda
 
 from readData import get_data
-from models.textModel import TextModel
 
 
-def main():
-    # set config
-    print('setting config')
-    config = setup()
+def main(args):
+    config = args
 
     print('loading data')
-    data, iters, vocab = get_data(config)
+    data, iters, vocab, stats = get_data(config)
+
+    config.q_size = stats['question_size']
+    config.a_size = stats['answer_size']
+    config.c_size = stats['topic_size']
+    config.keys = ['A', 'c']
+    config.sizes = {'A': config.a_size, 'c': config.c_size}
 
     if config.verbose:
         x = next(iter(iters['val']))
@@ -37,85 +37,30 @@ def main():
         train_all(net, data, iters, config)
     else:
         print("Let\'s start Testing")
-        test_all(net, data, iters[config.test_iter], config)
-
-
-##
-def setup():
-    if not os.path.isdir('logs'):
-        os.mkdir('logs')
-    logger = Logger('./logs')
-
-    parser = argparse.ArgumentParser(description='TQA basline Text model')
-    parser.add_argument('--ckpt', '-c', default=None, help='ckpt epoch name')
-    parser.add_argument('--test', '-t', default=False, help='debug')
-    parser.add_argument('--train', '-tr', default=False, help='train or test')
-    args = parser.parse_args()
-    args.source_dir = '/home/jiwan/tqa/prepro/data'
-    args.ckpt_dir = './ckpt'
-    args.emb_dim = 300
-    args.repeat = False
-    args.learning_rate = 0.001
-    args.if_pair = False
-    args.log_epoch = 4
-    args.bi_gru = True
-    args.batch_size = 36
-    args.verbose = False
-    args.end_epoch = 100
-    args.single_topic = False
-    args.embed_size = 100
-    args.shuffle = True
-    args.large_topic = False
-
-    args.test_iter = 'val'
-
-    args.cuda = True
-    if not torch.cuda.is_available():
-        args.cuda = False
-
-    config = args
-    config.recuda = ReCuda(config)
-    config.resume = False
-    if config.ckpt is not None:
-        config.resume = True
-    config.ckpt_name = '_single'
-    if not config.single_topic:
-        config.ckpt_name = '_all'
-    if config.large_topic:
-        config.ckpt_name = '_large'
-
-    config.logger = logger
-
-    config.recuda.torch.manual_seed(1)
-
-    config.model = TextModel
-
-    return config
-
+        test_and_save(net, data, iters[config.test_iter], config)
 
 ##
 # get net
 def get_net(config, vocab):
     if config.resume:
-        print('RESUME {}th epoch'.format(config.ckpt))
         assert os.path.isdir('ckpt'), 'Error: no dir'
-        ckpt = torch.load(os.path.join(config.ckpt_dir, 'ckpt{}_{}.t7'.format(config.ckpt_name, config.ckpt)))
-        net = config.model(vocab, config)
+        ckpt = torch.load(os.path.join(config.ckpt_dir, config.load_ckpt))
+        net = config.model(config, vocab)
         net.load_state_dict(ckpt['params'])
         best_acc = ckpt['acc']
         start_epoch = ckpt['epoch']
+        print('RESUME {}th epoch'.format(start_epoch))
     else:
-        net = config.model(vocab, config)
+        net = config.model(config, vocab)
         best_acc = 0
         start_epoch = 0
     net = config.recuda.var(net)
-    print('PARAMS: ', net.parameters)
+    print('PARAMS: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
     return net, best_acc, start_epoch
 
 
 ##
 def run_net(net, config, data):
-    answers_size = len(data.answers)
     answers = torch.stack(data.answers, dim=2)
 
     if config.single_topic:
@@ -127,7 +72,7 @@ def run_net(net, config, data):
     target = config.recuda.var(target)
     # print('t:', topics.size(), type(topics))
     # run
-    return net.forward(topics, data.question, answers, answers_size)
+    return net.forward(config.recuda.var(topics), config.recuda.var(data.question), config.recuda.var(answers))
 
 
 ##
@@ -201,13 +146,15 @@ def save_net(net, config, epoch, acc):
     }
     if not os.path.isdir('ckpt'):
         os.mkdir('ckpt')
-    torch.save(state, os.path.join(config.ckpt_dir, 'ckpt{}_{}.t7'.format(config.ckpt_name,epoch)))
+    if not os.path.isdir('ckpt/temp'):
+        os.mkdir('ckpt/temp')
+    torch.save(state, os.path.join(config.ckpt_dir, 'temp', 'ckpt{}_{}.t7'.format(config.ckpt_name,epoch)))
 
 
 ##
 def train_all(net, data, iters, config):
     config.loss_fn = nn.CrossEntropyLoss()
-    config.optimizer = torch.optim.Adam(net.parameters(), lr=config.learning_rate)
+    config.optimizer = torch.optim.Adam(net.parameters(), lr=config.learning_rate, weight_decay=config.l2)
 
     for epoch in range(config.start_epoch, config.end_epoch):
         print("{} epoch".format(epoch))
@@ -218,7 +165,7 @@ def train_all(net, data, iters, config):
 ##
 
 
-def test_epoch(net, config, data, test_iter):
+def test(net, config, data, test_iter):
     test_net = Counter()
     net_dict = {}
 
@@ -236,8 +183,8 @@ def test_epoch(net, config, data, test_iter):
     return test_net, net_dict
 
 
-def test_all(net, data, test_iter, config):
-    test_counter, test_dict = test_epoch(net, config, data, test_iter)
+def test_and_save(net, data, test_iter, config):
+    test_counter, test_dict = test(net, config, data, test_iter)
 
     with open(os.path.join(config.source_dir, 'correct_counter_{}{}.pickle'.format(config.test_iter, config.ckpt_name)), 'wb') as outfile:
         pickle.dump(test_counter, outfile)
@@ -245,7 +192,3 @@ def test_all(net, data, test_iter, config):
     with open(os.path.join(config.source_dir, 'correct_dict_{}{}.pickle'.format(config.test_iter, config.ckpt_name)), 'wb') as outfile:
         pickle.dump(test_dict, outfile)
 
-
-##
-if __name__ == "__main__":
-    main()

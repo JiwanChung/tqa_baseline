@@ -1,15 +1,18 @@
+# -*- coding: utf-8 -*-
+
 import argparse
 import json
 import os
 import pandas as pd
-from math import log as ln
-import spacy
+import csv
 import re
 from collections import OrderedDict
+import sys
+
+sys.path.append(os.path.join(os.path.expanduser('~'), 'mc', 'utils'))
+from tokenizer import Tokenizer
 
 from tqdm import tqdm
-
-nlp = spacy.load('en')
 
 def main():
     args = get_args()
@@ -29,26 +32,14 @@ def get_args():
     parser.add_argument('-top', "--single-topic", action='store_true') # store_true -> False!!
     parser.add_argument('-p', "--if-pair", action='store_true')
     parser.add_argument('-dq', "--diagram_questions", action='store_true')
-
+    parser.add_argument('-to', "--tokenizer", default='spacy')
+    
     # TODO : put more args here
     return parser.parse_args()
 
 def remove_delim(word):
     word = re.sub(r"\.", "", word)
     return word
-
-def token_sent(sent):
-
-    sent = re.sub(
-        r"[\*\"\n\\\+\-\/\=\(\):\[\]\|\!;]", " ",
-        str(sent))
-    sent = re.sub(r"[ ]+", " ", sent)
-    sent = re.sub(r"\!+", "!", sent)
-    sent = re.sub(r"\,+", ",", sent)
-    sent = re.sub(r"\?+", "?", sent)
-
-    sent = unicode(sent)
-    return [x.text for x in nlp.tokenizer(sent) if x.text != " "]
 
 def prepro(args):
     prepro_each(args, 'train')
@@ -64,16 +55,30 @@ def prepro_each(args, data_type):
     tabular = []
     pair = []
 
+    stat = {}
+    stat['max_topic_words'] = 0
+    stat['max_question_words'] = 0
+    stat['max_answer_words'] = 0
+    stat['max_answers'] = 0
+    stat['max_topics'] = 0
+
+    tokenizer = Tokenizer(args.tokenizer)
+    tokenize = tokenizer.tokenize
+
     for index_l, lesson in enumerate(tqdm(source_data)):
         topics = []
+        stat['max_topics'] = max(stat['max_topics'], len(lesson['topics']))
         for key_t, topic in lesson['topics'].items():
+            stat['max_topic_words']  = max(stat['max_topic_words'], len(tokenize(topic)))
             topics.append(topic['content']['text'])
 
-        def getqs(q_raw_data, with_diagram=False, if_pair=False):
+        def getqs(q_raw_data, with_diagram=False, if_pair=False, stat=None):
             q_tabular = []
 
             for key_q, q in q_raw_data.items():
                 question = q['beingAsked']['processedText']
+
+                stat['max_question_words'] = max(stat['max_question_words'], len(tokenize(question)))
 
                 # handling weird exception of questions without any correct answer
                 # WARNING: obviously this rules out the entire test set effectively
@@ -92,93 +97,68 @@ def prepro_each(args, data_type):
                     answer_str = answer['processedText']
                     idstruct = answer['idStructural']
                     answers.append(answer_str)
-                    if answer_str == correct_answer or token_sent(correct_answer) == token_sent(remove_delim(idstruct)):
+
+                    stat['max_answer_words'] = max(stat['max_answer_words'], len(tokenize(answer_str)))
+
+                    if answer_str == correct_answer or tokenize(correct_answer) == tokenize(remove_delim(idstruct)):
                         correct_index = index_a
 
-                if args.single_topic:
-                    def get_idf(word, docs):
-                        N = len(docs)
-                        count = 0
-                        for doc in docs:
-                            if word in doc:
-                                count += 1
+                stat['max_answers'] = max(stat['max_answers'], len(answers))
 
-                        return ln(float(N)/(1+count))
+                ltos = listToString()
 
-                    def get_tf(word, doc):
-                        N = len(doc)
-                        count = doc.count(word)
-
-                        return float(count)/N
-
-                    # pick relev topic based on tf-idf
-                    idf = {}
-
-                    for word in question:
-                        idf[word] = get_idf(word, topics)
-
-                    max_score = 0
-                    max_arg = 0
-                    for index_topic, topic in enumerate(topics):
-                        if len(topic) > 0:
-                            score_topic = 0
-                            for word in question:
-                                score_topic += get_tf(word, topic)*idf[word]
-                            if score_topic > max_score:
-                                max_score = score_topic
-                                max_arg = index_topic
-
-                    relev_topic = topics[max_arg]
-                else:
-                    relev_topic = topics
+                relev_topic = ltos.run(topics)
 
                 # TODO: process diagrams to CNN features
 
                 # ignore data if the question does not have a valid answer
                 if correct_index >= 0:
-
-                    if data_type == 'train':
-                        correct_answer = answers[correct_index]
-                        if if_pair:
-                            for ans in answers:
-                                q_tabular.append({'question':question, 'correct_answer':correct_answer, 'wrong_answer':ans, 'topic':relev_topic, 'id': q['globalID']})
-                        else:
-                            q_tabular.append({'question':question, 'correct_answer':correct_index, 'answers':answers, 'topic':relev_topic, 'id': q['globalID']})
+                    correct_answer = answers[correct_index]
+                    answer_string = ltos.run(answers)
+                    if if_pair:
+                        for ans in answers:
+                            q_tabular.append({'question':question, 'correct_answer':correct_answer, 'wrong_answer':ans, 'topic':relev_topic, 'id': q['globalID']})
                     else:
-                        correct_answer = answers[correct_index]
-                        if if_pair:
-                            for ans in answers:
-                                q_tabular.append({'question':question, 'correct_answer':correct_answer, 'wrong_answer':ans, 'topic':relev_topic, 'id': q['globalID']})
-                        else:
-                            q_tabular.append({'question':question, 'correct_answer':correct_index, 'answers':answers, 'topic':relev_topic, 'id': q['globalID']})
+                        q_tabular.append({'question':question, 'correct_answer':correct_index, 'answers':answer_string, 'topic':relev_topic, 'id': q['globalID']})
 
             return q_tabular
 
         nondq_raw = lesson['questions']['nonDiagramQuestions']
 
-        nondq_tab = getqs(nondq_raw, False, False)
+        nondq_tab = getqs(nondq_raw, False, False, stat)
         if args.if_pair:
-            nondq_pair = getqs(nondq_raw, False, True)
+            nondq_pair = getqs(nondq_raw, False, True, stat)
             pair += nondq_pair
 
         tabular += nondq_tab
         '''if args.diagram_questions:
-            dq_tab = getqs(nondq_raw, False)
+            dq_tab = getqs(nondq_raw, False, stat)
             dq_raw = lesson['questions']['diagramQuestions']
             tabular += dq_tab'''
 
     # save
-    save(args, tabular, data_type)
+    stats = {u'topic_size': stat['max_topic_words'], u'topic_num': stat['max_topics'], u'question_size': stat['max_question_words'], u'answer_size': stat['max_answers'], u'answer_num': stat['max_answer_words']}
+    save(args, tabular, data_type, stats)
     if args.if_pair:
-        save(args, pair, '{}_{}'.format(data_type, 'pair'))
+        save(args, pair, '{}_{}'.format(data_type, 'pair'), stats)
 
-def save(args, data, data_type):
+class listToString():
+    def __init__(self):
+        self.regex_quote = re.compile(r'\'*')
+        self.regex_doublequote = re.compile(r'\"*')
+    def run(self, list_data):
+        return '[' + ''.join('"{}", '.format(self.regex_quote.sub(r'', self.regex_doublequote.sub(r'', datum))) for datum in list_data)[:-2] + ']'
+
+def save(args, data, data_type, stats):
     add_opt = ''
     if not args.single_topic:
         add_opt = '_full'
     data_path = os.path.join(args.target_dir, "data_{}{}.tsv".format(data_type, add_opt))
     df = pd.DataFrame(data)
-    df.to_csv(data_path, index=False, sep='\t')
+    df.to_csv(data_path, index=False, sep='\t', encoding='utf-8', quoting=csv.QUOTE_NONE)
+
+    with open(os.path.join(args.target_dir, "stat_{}{}.json".format(data_type, add_opt)), 'w') as file:
+        json.dump(stats, file)
 
 if __name__ == "__main__":
     main()

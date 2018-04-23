@@ -2,6 +2,8 @@ import pickle
 import json
 from collections import Counter
 import argparse
+import re
+from collections import OrderedDict
 
 parser = argparse.ArgumentParser(description='TQA basline Text model')
 parser.add_argument('--ckpt-name', '-c', default='', help='type of file to process')
@@ -34,11 +36,21 @@ for lesson in data:
                 if 'questionSubType' in q:
                     right_counter[q['questionSubType']] += 1
 
+def keys(x):
+    xid = x[0]
+    xid = re.sub(r'[A-Za-z]*_', r'', xid)
+    return int(xid)
+
+output_right.sort(key=keys)
+output_wrong.sort(key=keys)
+print('sorted')
+dicts = [OrderedDict((a[0], a) for a in output_right), OrderedDict((a[0], a) for a in output_wrong)]
+
 with open('prepro/data/wrong_answer_pair{}.json'.format(args.ckpt_name), 'w') as outfile:
-    json.dump(output_wrong, outfile)
+    json.dump(dicts[1], outfile)
 
 with open('prepro/data/right_answer_pair{}.json'.format(args.ckpt_name), 'w') as outfile:
-    json.dump(output_right, outfile)
+    json.dump(dicts[0], outfile)
 
 with open('prepro/data/stats{}.json'.format(args.ckpt_name), 'w') as outfile:
     json.dump("Right:{}, Wrong:{}".format(right_counter, wrong_counter), outfile)

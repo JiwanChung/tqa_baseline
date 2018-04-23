@@ -51,7 +51,7 @@ class ListField(torchtext.data.Field):
     def __init__(self, list_field, use_vocab=True, init_token=None, eos_token=None,
                  fix_length=None, tensor_type=torch.LongTensor, preprocessing=None,
                  postprocessing=None, tokenizer=lambda s: s.split(), pad_token='<pad>',
-                 pad_first=False):
+                 pad_first=False, fix_list_length=None):
         if isinstance(list_field, ListField):
             raise ValueError('list_field field must not be another ListField')
         if list_field.include_lengths:
@@ -76,6 +76,7 @@ class ListField(torchtext.data.Field):
         )
         self.list_field = list_field
         self.vocab_cls = torchtext.vocab.Vocab
+        self.fix_list_length = fix_list_length
 
         self.regex_front = re.compile(r'u\"|u\'')
         self.regex_end = re.compile(r'[\'\",]*$')
@@ -106,6 +107,8 @@ class ListField(torchtext.data.Field):
                 and custom postprocessing Pipeline.
         """
         max_ans = len(max(batch, key=lambda x: len(x)))
+        if self.fix_list_length is not None:
+            max_ans = self.fix_list_length
         ans_list = [ x[:max_ans] + [[self.pad_token]] * max(0, max_ans - len(x)) for x in batch]
         padded = [ self.pad(i) for i in ans_list ]
         max_pad = len(max(padded, key=lambda ex: len(ex[0]))[0])

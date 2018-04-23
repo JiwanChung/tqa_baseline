@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 class TextModel(nn.Module):
-    def __init__(self, vocab, config):
+    def __init__(self, config, vocab):
         super(TextModel, self).__init__()
 
         self.config = config
@@ -12,13 +12,13 @@ class TextModel(nn.Module):
         self.embed = nn.Embedding(len(vocab), config.emb_dim)
         self.embed.weight.data.copy_(vocab.vectors)
 
-        self.bi = 2 if config.bi_gru else 1
+        self.bi = config.bi
 
         self.embed_context = nn.GRU(config.emb_dim, self.config.embed_size, bidirectional=config.bi_gru)
         self.embed_question = nn.GRU(config.emb_dim, self.config.embed_size, bidirectional=config.bi_gru)
         self.embed_answer = nn.GRU(config.emb_dim, self.config.embed_size, bidirectional=config.bi_gru)
 
-    def forward(self, context, question, answers, answers_size):
+    def forward(self, context, question, answers):
 
         if not self.config.single_topic:
             context_shape = list(context.data.size())
