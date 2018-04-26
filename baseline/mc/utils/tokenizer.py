@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
-import sys
 import re
+import six
 
+from revtok import tokenize as revtok_tokenize
 import spacy
 spacy_en = spacy.load('en')
 
-from revtok import tokenize as revtok_tokenize
 
 class Tokenizer():
     def __init__(self, opt='spacy'):
@@ -17,24 +17,23 @@ class Tokenizer():
         else:
             self.tokenize = self.revtok
 
-        self.re_dot = re.compile(r".$")
+        self.re_dot = re.compile(r"\.$")
         self.re_que = re.compile(r"\?+")
         self.re_com = re.compile(r"\,+")
         self.re_exc = re.compile(r"\!+")
-        self.re_bra = re.compile(r"[ ]+")
-
-        self.re_all = re.compile(r"[\*\"“”\n\\…\+\-\/\=\(\)‘•:\[\]\|’\!;]")
+        self.re_bra = re.compile(r"[\[\]]+")
 
     def re(self, text):
-        text = self.re_all.sub(" ", str(text))
+        text = str(text)
 
         text = self.re_dot.sub(" ", text)
         text = self.re_que.sub("!", text)
         text = self.re_com.sub(",", text)
         text = self.re_exc.sub("?", text)
         text = self.re_bra.sub("", text)
+        text = text.strip()
 
-        if sys.version_info < (3, 0):
+        if six.PY2:
             text = unicode(text)
 
         return text
@@ -47,7 +46,6 @@ class Tokenizer():
         return print_list
 
     def revtok(self, text):
-
         text = self.re(text)
 
         return revtok_tokenize(text)

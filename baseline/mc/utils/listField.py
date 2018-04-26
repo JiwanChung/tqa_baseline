@@ -1,5 +1,6 @@
 import torch
 import torchtext
+from torch.autograd import Variable
 
 import re #for build_vocab
 from collections import Counter, OrderedDict #for build_vocab
@@ -77,6 +78,7 @@ class ListField(torchtext.data.Field):
         self.list_field = list_field
         self.vocab_cls = torchtext.vocab.Vocab
         self.fix_list_length = fix_list_length
+        self.list_field.fix_length = fix_length
 
         self.regex_front = re.compile(r'u\"|u\'')
         self.regex_end = re.compile(r'[\'\",]*$')
@@ -106,18 +108,85 @@ class ListField(torchtext.data.Field):
             torch.autograd.Variable: Processed object given the input
                 and custom postprocessing Pipeline.
         """
-        max_ans = len(max(batch, key=lambda x: len(x)))
+
+        # pad each item
+        padded = self.pad(batch)
+        tensor = self.numericalize(padded, device=device, train=train)
+
+        # print(tensor[0].data)
+        tensor = [torch.t(lesson) for lesson in tensor]
+        arr = torch.stack(tensor, dim=2)  # batch_size, topic_num, topic_words(, char_num)
+
+        # permute for sane reversiblility
+        if type(self.list_field) is torchtext.data.NestedField:
+            arr = arr.permute(1, 2, 0, 3)  # topic_num, topic_words, batch_size, char_num
+        else:
+            arr = arr.permute(1, 2, 0)  # topic_num, topic_words, batch_size
+
+        if self.sequential and not self.batch_first:
+            arr.t_()
+        if device == -1:
+            if self.sequential:
+                arr = arr.contiguous()
+        else:
+            arr = arr.cuda(device)
+
+        return arr
+
+    def pad(self, list_batch):
+        list_length = max(list_batch, key=lambda x: len(x))
         if self.fix_list_length is not None:
-            max_ans = self.fix_list_length
-        ans_list = [ x[:max_ans] + [[self.pad_token]] * max(0, max_ans - len(x)) for x in batch]
-        padded = [ self.pad(i) for i in ans_list ]
-        max_pad = len(max(padded, key=lambda ex: len(ex[0]))[0])
-        tensor = [ self.numericalize(i, device=device, train=train) for i in padded ]
-        #print(tensor[0].data)
-        tensor = [ torch.t(torch.nn.functional.pad( x, (0, max_pad-x.size()[1]),"constant", 1)) for x in tensor ]
-        '''for i in tensor:
-            print(i.data.size())'''
-        return tensor
+            list_length = self.fix_list_length
+
+        # pad list num
+        list_batch = [lesson[:list_length] + [[self.pad_token]] * max(0, list_length - len(lesson)) for lesson in list_batch]
+
+        '''
+        max_len = self.fix_length + (
+                self.init_token, self.eos_token).count(None) - 2
+
+        padded, lengths = [], []
+        for lesson in list_batch:
+            lp = []
+            ll = []
+            for x in lesson:
+                if self.pad_first:
+                    lp.append(
+                        [self.pad_token] * max(0, max_len - len(x)) +
+                        ([] if self.init_token is None else [self.init_token]) +
+                        list(x[-max_len:] if self.truncate_first else x[:max_len]) +
+                        ([] if self.eos_token is None else [self.eos_token]))
+                else:
+                    lp.append(
+                        ([] if self.init_token is None else [self.init_token]) +
+                        list(x[-max_len:] if self.truncate_first else x[:max_len]) +
+                        ([] if self.eos_token is None else [self.eos_token]) +
+                        [self.pad_token] * max(0, max_len - len(x)))
+                    ll.append(len(lp[-1]) - max(0, max_len - len(x)))
+            padded.append(lp)
+            lengths.append(ll)
+        '''
+
+        padded = []
+        lengths = []
+        for batch in list_batch:
+            if self.include_lengths:
+                pa, le = self.list_field.pad(batch)
+                padded.append(pa)
+                lengths.append(le)
+            else:
+                padded.append(self.list_field.pad(batch))
+
+        if self.include_lengths:
+            return (padded, lengths)
+        return padded
+
+    def numericalize(self, arr_list, device=None, train=True):
+        numer_each = self.list_field.numericalize
+
+        tensor = [numer_each(x, device=device, train=train) for x in arr_list]
+
+        return torch.stack(tensor, dim=2)
 
     def build_vocab(self, *args, **kwargs):
         """Construct the Vocab object for listing field and combine it with this field's vocab.

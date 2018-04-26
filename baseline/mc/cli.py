@@ -24,7 +24,7 @@ def setup():
     parser = argparse.ArgumentParser(description='TQA model')
     parser.add_argument('--load-ckpt', '-c', default=None, help='ckpt name')
     parser.add_argument('--test', '-t', default=False, help='debug')
-    parser.add_argument('--train', '-tr', default=False, help='train or test')
+    parser.add_argument('--train', '-tr', default=True, help='train or test')
     args = parser.parse_args()
     args.source_dir = '/home/jiwan/tqa/prepro/data'
     args.ckpt_dir = './ckpt'
@@ -34,7 +34,7 @@ def setup():
     args.if_pair = False
     args.log_epoch = 4
     args.bi_gru = True
-    args.batch_size = 36
+    args.batch_size = 18
     args.verbose = False
     args.end_epoch = 100
     args.single_topic = False
@@ -52,6 +52,9 @@ def setup():
     args.dim_words = 2
     args.ans_k = 7
     args.l2 = 0.0005
+    args.debug = True
+    args.character_embedding = True
+    args.char_length = 24
 
     args.bi = 2 if args.bi_gru else 1
 
@@ -77,7 +80,7 @@ def setup():
 
     config.recuda.torch.manual_seed(1)
 
-    config.model = ModuleNet
+    config.model = TextModel
 
     return config
 

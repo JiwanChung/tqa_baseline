@@ -7,6 +7,7 @@ from tqdm import tqdm
 import torch.nn as nn
 
 import os
+from functools import partial
 from collections import Counter
 import pickle
 
@@ -17,7 +18,7 @@ def main(args):
     config = args
 
     print('loading data')
-    data, iters, vocab, stats = get_data(config)
+    data, iters, vocab, stats, Q_field = get_data(config)
 
     config.q_size = stats['question_size']
     config.a_size = stats['answer_size']
@@ -58,21 +59,25 @@ def get_net(config, vocab):
     print('PARAMS: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
     return net, best_acc, start_epoch
 
+def prepare_data(config, field, permute_list):
+    # permute for vocab Embedding
+    return config.recuda.var(field.permute(*permute_list).contiguous())
 
 ##
-def run_net(net, config, data):
-    answers = torch.stack(data.answers, dim=2)
+def run_net(net, config, d):
 
-    if config.single_topic:
-        topics = data.topic.data
-    else:
-        topics = torch.stack(data.topic, dim=2)
-
-    target = Variable(data.correct_answer.data, requires_grad=False)
-    target = config.recuda.var(target)
-    # print('t:', topics.size(), type(topics))
     # run
-    return net.forward(config.recuda.var(topics), config.recuda.var(data.question), config.recuda.var(answers))
+    pd = partial(prepare_data, config)
+
+    C = pd(d.t_word, [1, 0, 2])
+    Q = pd(d.q_word, [0, 1])
+    AS = pd(d.as_word, [1, 0, 2])
+
+    CC = pd(d.t_char, [1, 0, 2, 3])  # topic_words, topic_num, batch_size, char_num
+    QC = pd(d.q_char, [0, 1, 2])
+    ASC = pd(d.as_char, [1, 0, 2, 3])
+
+    return net.forward((C, CC), (Q, QC), (AS, ASC))
 
 
 ##
@@ -82,7 +87,7 @@ def train_epoch(net, config, data, train_iter, epoch):
     train_loss = 0
     for batch_index, data in tqdm(enumerate(train_iter)):
         net.zero_grad()
-        target = Variable(data.correct_answer.data, requires_grad=False)
+        target = Variable(data.ca.data, requires_grad=False)
         target = config.recuda.var(target)
 
         if config.verbose:
@@ -97,6 +102,8 @@ def train_epoch(net, config, data, train_iter, epoch):
         if config.verbose:
             print('y:', y.data)
             print('t:', target.data)
+        if config.debug:
+            print('y:', y.data)
 
         loss = config.loss_fn(y, target)
         # count loss
@@ -122,7 +129,7 @@ def validate_epoch(net, config, data, val_iter, epoch):
         y = run_net(net, config, data)
 
         value, pred = torch.max(y, 1)
-        check = torch.eq(data.correct_answer.data, pred.data)
+        check = torch.eq(data.ca.data, pred.data)
         if config.verbose:
             print(torch.sum(check), check.size())
         correct += torch.sum(check)
@@ -175,10 +182,10 @@ def test(net, config, data, test_iter):
         y = run_net(net, config, data)
 
         value, pred = torch.max(y, 1)
-        check = torch.eq(data.correct_answer.data, pred.data)
+        check = torch.eq(data.ca.data, pred.data)
         for i in range(len(check)):
             test_net[data.id[i]] += int(check[i])
-            net_dict[data.id[i]] = [pred.data[i], data.correct_answer.data[i]]
+            net_dict[data.id[i]] = [pred.data[i], data.ca.data[i]]
 
     return test_net, net_dict
 
@@ -191,4 +198,3 @@ def test_and_save(net, data, test_iter, config):
 
     with open(os.path.join(config.source_dir, 'correct_dict_{}{}.pickle'.format(config.test_iter, config.ckpt_name)), 'wb') as outfile:
         pickle.dump(test_dict, outfile)
-

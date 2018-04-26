@@ -9,6 +9,8 @@ class Decoder(nn.Module):
         self.dim_words = config.dim_words
         self.ans_k = config.ans_k
 
+        self.debug = config.debug
+
         self.sampledown = nn.Sequential(
                             nn.Linear(config.a_size * config.h_size, config.hidden_size),
                             nn.ReLU(),
@@ -30,7 +32,6 @@ class Decoder(nn.Module):
         # naive probability
 
         o = o.squeeze()
-        A = A
         x = torch.matmul(o.unsqueeze(3).unsqueeze(2), A.unsqueeze(3))
         s = x.size()
         x = x.view(s[0],s[1],-1,s[4])
@@ -41,10 +42,14 @@ class Decoder(nn.Module):
         oa = torch.sum(oa, 1)
         p = F.softmax(oa, dim=1)
 
+        p_sum = torch.sum(p, dim=1, keepdim=True)
+
         # answer patchwise probability
-        A = torch.mul(A, p.unsqueeze(1).unsqueeze(1))
+        A = torch.mul(A, p.unsqueeze(1).unsqueeze(1))  # batch_size, embed_size, words_answer, answer_num
+        A = A / p_sum.unsqueeze(1).unsqueeze(1)
         A = self.sa(self.ans_k, A)
 
         A = torch.sum(A, 1).squeeze()
         A = torch.sum(A, 1).squeeze()
+
         return A

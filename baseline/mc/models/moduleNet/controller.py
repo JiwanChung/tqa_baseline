@@ -9,7 +9,7 @@ class Controller(nn.Module):
     def __init__(self, config):
         super(Controller, self).__init__()
 
-        self.k = config.k # MAX num of steps
+        self.k = config.k  # MAX num of steps
         self.conf_threshold = config.conf
 
         self.batch_size = config.batch_size
@@ -27,13 +27,14 @@ class POCController(Controller):
         super(POCController, self).__init__(config)
 
     def forward(self, M, qa):
-        h = self.init_h([self.batch_size, self.emb, self.h_size])
+        current_batch_size = qa.size()[0]
+
+        h = self.init_h([current_batch_size, self.emb, self.h_size])
 
         for i in range(self.k):
             # run module
             qa, h, o, conf = self.module(M, qa, h)
-            #if conf > self.conf_threshold:
-                #break
+            # if conf > self.conf_threshold:
 
         return o, conf
 

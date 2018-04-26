@@ -20,6 +20,10 @@ class TextModel(nn.Module):
 
     def forward(self, context, question, answers):
 
+        context = context[0]
+        question = question[0]
+        answers = answers[0]
+
         if not self.config.single_topic:
             context_shape = list(context.data.size())
             context_shape.append(self.config.emb_dim)

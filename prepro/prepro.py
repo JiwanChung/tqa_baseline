@@ -33,7 +33,7 @@ def get_args():
     parser.add_argument('-p', "--if-pair", action='store_true')
     parser.add_argument('-dq', "--diagram_questions", action='store_true')
     parser.add_argument('-to', "--tokenizer", default='spacy')
-    
+
     # TODO : put more args here
     return parser.parse_args()
 

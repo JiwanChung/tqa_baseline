@@ -1,3 +1,3 @@
 zsh utils/clear.sh
-python main.py
+python cli.py
 zsh utils/postprocess.sh _all

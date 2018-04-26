@@ -27,6 +27,7 @@ class SimpleModule(nn.Module):
         h: batch_size, h_size
         '''
         m = self.memory_attention(M, qa, h)
+
         x = self.reasoning(h, m)
 
         qa = self.question_attend(qa, x)
